@@ -1,0 +1,109 @@
+{$} { { SIL WB}}
+{A} { { AX WB}}
+{A(2)} { { EY WB}}
+{ADMITS} { { AE WB} D M IH T { S WB}}
+{ADMITS(2)} { { AE WB} M IH T { S WB}}
+{AGAINST} { { AX WB} G EH N S { T WB}}
+{AGENCY} { { EY WB} JH AX N S { IY WB}}
+{AMBULANCE} { { AE WB} M B Y UH L AX N { S WB}}
+{AN} { { AE WB} { N WB}}
+{AND} { { AE WB} N { D WB}}
+{AND(2)} { { AE WB} { N WB}}
+{APPARENTLY} { { AX WB} P AE R AX N T L { IY WB}}
+{APPEALS} { { AX WB} P IY L { Z WB}}
+{ARE} { { AA WB} { R WB}}
+{ARE(2)} { { AXR WB}}
+{ATTACKERS} { { AE WB} T AH K AXR { Z WB}}
+{ATTACKERS(2)} { { AX WB} T AE K AXR { Z WB}}
+{AVOIDED} { { AX WB} V OY D AX { D WB}}
+{BY} { { B WB} { AY WB}}
+{CARE} { { K WB} EY { R WB}}
+{CAUSED} { { K WB} AO Z { D WB}}
+{CHASING} { { CH WB} EY S IX { NG WB}}
+{COMPUTERS} { { K WB} AX M P Y UW T AXR { Z WB}}
+{CONSTRUCTIVE} { { K WB} AX N S T R AH K T IH { V WB}}
+{CONVICTED} { { K WB} AX N V IH K T AX { D WB}}
+{CRITICISM} { { K WB} R IH T IH S IH Z { XM WB}}
+{DEVISE} { { D WB} IH V AY { S WB}}
+{DEVISE(2)} { { D WB} IH V AY { Z WB}}
+{DOING} { { D WB} UW IX { NG WB}}
+{EVEN} { { IY WB} V AX { N WB}}
+{EXECUTION} { { EH WB} K S AX K Y UW SH AX { N WB}}
+{FAILURE} { { F WB} EY L Y { AXR WB}}
+{FLORIDA} { { F WB} L AA R IH D { AX WB}}
+{FLORIDA(2)} { { F WB} L AO R IH D { AX WB}}
+{FOLLOWS} { { F WB} AA L OW { Z WB}}
+{FORTY} { { F WB} AO R T { IY WB}}
+{HAS} { { HH WB} AE { Z WB}}
+{HE} { { HH WB} { IY WB}}
+{HEALTH} { { HH WB} EH L { TH WB}}
+{IN} { { IH WB} { N WB}}
+{INCREASING} { { IH WB} N K R IY S IX { NG WB}}
+{INTERNET} { { IH WB} N T AXR N EH { T WB}}
+{INTERNET(2)} { { IH WB} N T ER N EH { T WB}}
+{INTO} { { IH WB} N T { UW WB}}
+{IS} { { IH WB} { Z WB}}
+{KNEW} { { N WB} Y { UW WB}}
+{KNEW(2)} { { N WB} { UW WB}}
+{LODGING} { { L WB} AA JH IX { NG WB}}
+{MAKE} { { M WB} EY { K WB}}
+{MANAGERS} { { M WB} AE N IH JH AXR { Z WB}}
+{MANY} { { M WB} EH N { IY WB}}
+{MORE} { { M WB} AO { R WB}}
+{MOUNTAIN} { { M WB} AW N T { XN WB}}
+{MURDERER} { { M WB} ER D AXR { AXR WB}}
+{MUST} { { M WB} AH S { T WB}}
+{NOT} { { N WB} AA { T WB}}
+{OF} { { AX WB} { F WB}}
+{OF(2)} { { AX WB} { V WB}}
+{OLD} { { OW WB} L { D WB}}
+{OUTAGES} { { AW WB} T AH G { Z WB}}
+{OUTAGES(2)} { { AW WB} T IX JH AX { Z WB}}
+{OUTAGES(3)} { { AW WB} T IX JH IX { Z WB}}
+{PENTAGON} { { P WB} EH N AX G AA { N WB}}
+{PENTAGON(2)} { { P WB} EH N T AX G AA { N WB}}
+{POLICY} { { P WB} AA L AX S { IY WB}}
+{PROBLEMS} { { P WB} R AA B L AX M { Z WB}}
+{REMEMBER} { { R WB} IH M EH M B { AXR WB}}
+{REPEATED} { { R WB} IH P IY T AX { D WB}}
+{RUNNING} { { R WB} AH N IX { NG WB}}
+{SABOTAGE} { { S WB} AE B AX T AA { ZH WB}}
+{SAY} { { S WB} { EY WB}}
+{SOLUTIONS} { { S WB} AX L UW SH AX N { Z WB}}
+{STATE} { { S WB} T EY { T WB}}
+{STATES} { { S WB} T EY T { S WB}}
+{STORY} { { S WB} T AO R { IY WB}}
+{STRONGER} { { S WB} T R AO NG G { AXR WB}}
+{SUCCEEDED} { { S WB} AX K S IY D AX { D WB}}
+{SYSTEM} { { S WB} IH S T AX { M WB}}
+{TEMPORARY} { { T WB} EH M P AXR EH R { IY WB}}
+{THAN} { { DH WB} AE { N WB}}
+{THAN(2)} { { DH WB} AX { N WB}}
+{THAN(3)} { { DH WB} EH { N WB}}
+{THAT} { { DH WB} AE { T WB}}
+{THAT(2)} { { DH WB} AX { T WB}}
+{THE} { { DH WB} { AX WB}}
+{THE(2)} { { DH WB} { IY WB}}
+{THEY} { { DH WB} { EY WB}}
+{THREAT} { { TH WB} R EH { T WB}}
+{TO} { { T WB} { AX WB}}
+{TO(2)} { { T WB} { UW WB}}
+{TOUGH} { { T WB} AH { F WB}}
+{US} { { AH WB} { S WB}}
+{VALUABLE} { { V WB} AE L Y AX B { XL WB}}
+{VALUABLE(2)} { { V WB} AE L Y UH AX B { XL WB}}
+{VENGEANCE} { { V WB} EH N JH AX N { S WB}}
+{WELFARE} { { W WB} EH L F EY { R WB}}
+{WERE} { { W WB} { AXR WB}}
+{WERE(2)} { { W WB} { ER WB}}
+{WHAT} { { HH WB} W AA { T WB}}
+{WHAT(2)} { { W WB} AA { T WB}}
+{WHAT(3)} { { W WB} AH { T WB}}
+{WILL} { { W WB} IH { L WB}}
+{WILL(2)} { { W WB} { XL WB}}
+{WITH} { { W WB} IH { DH WB}}
+{WITH(2)} { { W WB} IH { TH WB}}
+{WORKERS} { { W WB} ER K AX { Z WB}}
+{WORKERS(2)} { { W WB} ER K AXR { Z WB}}
+{YEARS} { { Y WB} IY R { Z WB}}
+{YOU} { { Y WB} { UW WB}}

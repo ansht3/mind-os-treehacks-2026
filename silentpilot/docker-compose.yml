@@ -1,0 +1,47 @@
+# Optional: run all services with Docker Compose
+# Usage: docker compose up
+
+version: "3.9"
+
+services:
+  emg-core:
+    build:
+      context: .
+      dockerfile: Dockerfile.emg
+    ports:
+      - "8000:8000"
+    environment:
+      - EMG_READER=mock
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+
+  mcp-server:
+    build:
+      context: ./mcp_server
+    ports:
+      - "3333:3333"
+    environment:
+      - BROWSER_HEADLESS=true
+
+  agent:
+    build:
+      context: ./agent
+    ports:
+      - "9000:9000"
+    environment:
+      - EMG_WS_URL=ws://emg-core:8000/ws/live
+      - MCP_SERVER_URL=http://mcp-server:3333/sse
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      - emg-core
+      - mcp-server
+
+  ui:
+    build:
+      context: ./app_ui
+    ports:
+      - "3000:3000"
+    depends_on:
+      - emg-core
+      - agent
