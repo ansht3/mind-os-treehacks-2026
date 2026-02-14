@@ -31,7 +31,22 @@ class Overlay:
             print(f"  {marker} [{i}] {s.label}")
             print(f"       {s.description}")
         print("=" * 60)
-        print("  0-9: pick | UP/DOWN: navigate | ENTER: execute | q: quit")
+        print("  0-9: pick | UP/DOWN: navigate | ENTER: execute | t: ask AI | q: quit")
+        print("=" * 60, flush=True)
+
+    def show_prediction(self, label: str):
+        """Display a single prediction with yes/no controls."""
+        self.clear()
+        status = "\033[92m● Ready\033[0m" if self._ready else "\033[91m● Predicting...\033[0m"
+        print(f"  {status}")
+        print("=" * 60)
+        print("  SilentPilot — Next Action")
+        print("=" * 60)
+        print()
+        print(f"  >> {label}?")
+        print()
+        print("=" * 60)
+        print("  1: Yes  |  2: No  |  q: quit")
         print("=" * 60, flush=True)
 
     def clear(self):

@@ -16,3 +16,11 @@ BROWSER_HEADLESS: bool = False
 NUM_SUGGESTIONS: int = 12
 VIEWPORT_WIDTH: int = 1280
 VIEWPORT_HEIGHT: int = 800
+
+# CUA (Computer Use Agent) settings
+CUA_MODEL: str = "computer-use-preview"
+CUA_MAX_STEPS: int = 25
+
+# OpenClaw prediction settings
+OPENCLAW_ENABLED: bool = True
+OPENCLAW_SESSION_ID: str = "silentpilot"
