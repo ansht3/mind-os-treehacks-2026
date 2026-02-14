@@ -12,10 +12,10 @@ from actions.config import OPENAI_API_KEY
 class ActionEngine:
     """Core loop: screenshot -> vision API -> display suggestions -> execute."""
 
-    def __init__(self):
+    def __init__(self, overlay=None):
         self.browser = BrowserController()
         self.analyzer = PageAnalyzer(api_key=OPENAI_API_KEY)
-        self.overlay = Overlay()
+        self.overlay = overlay if overlay is not None else Overlay()
         self._suggestions: list[Suggestion] = []
         self._elements: list[dict] = []  # interactive elements from DOM
         self._selected: int = 0

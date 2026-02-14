@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import queue
 import sys
 import traceback
 import tty
@@ -150,13 +151,92 @@ async def run_emg(url: str):
         await engine.stop()
 
 
+async def run_gui_loop(url: str, command_queue: queue.Queue, overlay):
+    """Main loop for GUI mode: engine runs in this async loop, commands come from queue."""
+    if not OPENAI_API_KEY:
+        print("ERROR: OPENAI_API_KEY not set. Check silentpilot/.env", flush=True)
+        return
+
+    engine = ActionEngine(overlay=overlay)
+    loop = asyncio.get_event_loop()
+    try:
+        print("  Launching browser...", flush=True)
+        await engine.start(url)
+        print("  Browser ready!", flush=True)
+        while True:
+            try:
+                await engine.run_cycle()
+            except Exception as e:
+                print(f"\n  Error during analysis: {e}", flush=True)
+                traceback.print_exc()
+                cmd = await loop.run_in_executor(None, command_queue.get)
+                if cmd == "quit":
+                    return
+                continue
+            while True:
+                cmd = await loop.run_in_executor(None, command_queue.get)
+                if not cmd:
+                    continue
+                if cmd == "up":
+                    engine.move_selection("up")
+                elif cmd == "down":
+                    engine.move_selection("down")
+                elif cmd == "select":
+                    await engine.execute_selected()
+                    break
+                elif cmd.startswith("pick:"):
+                    idx = int(cmd.split(":")[1])
+                    engine.select_index(idx)
+                    await engine.execute_selected()
+                    break
+                elif cmd == "quit":
+                    print("\n  Goodbye!", flush=True)
+                    return
+    except Exception as e:
+        print(f"\n  Fatal error: {e}", flush=True)
+        traceback.print_exc()
+    finally:
+        await engine.stop()
+
+
+def run_gui(url: str):
+    """Run with GUI overlay: asyncio runs in main thread, pumped from tkinter (pyppeteer requires main thread for signals)."""
+    import tkinter as tk
+    from actions.gui_overlay import GuiOverlay
+
+    command_queue = queue.Queue()
+    root = tk.Tk()
+    overlay = GuiOverlay(command_queue, root)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    task = loop.create_task(run_gui_loop(url, command_queue, overlay))
+
+    def pump():
+        loop.run_until_complete(asyncio.sleep(0))
+        if task.done():
+            root.quit()
+        else:
+            root.after(5, pump)
+
+    root.after(5, pump)
+    root.mainloop()
+    if not task.done():
+        task.cancel()
+        try:
+            loop.run_until_complete(task)
+        except asyncio.CancelledError:
+            pass
+    loop.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="SilentPilot Browser Automation")
     parser.add_argument(
         "--mode",
-        choices=["keyboard", "emg"],
+        choices=["keyboard", "emg", "gui"],
         default="keyboard",
-        help="Input mode: keyboard (default) or emg",
+        help="Input mode: keyboard (default), emg, or gui",
     )
     parser.add_argument(
         "--url",
@@ -167,6 +247,8 @@ def main():
 
     if args.mode == "emg":
         asyncio.run(run_emg(args.url))
+    elif args.mode == "gui":
+        run_gui(args.url)
     else:
         asyncio.run(run_keyboard(args.url))
 
