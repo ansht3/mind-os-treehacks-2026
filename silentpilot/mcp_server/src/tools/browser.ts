@@ -13,9 +13,11 @@
  */
 
 import { chromium, Browser, Page } from "playwright";
+import { PageCursor } from "./cursor.js";
 
 let browser: Browser | null = null;
 let page: Page | null = null;
+let cursor: PageCursor | null = null;
 
 const VIEWPORT = { width: 1280, height: 800 };
 
@@ -40,6 +42,10 @@ export async function ensureBrowser(): Promise<Page> {
       viewport: VIEWPORT,
     });
     page = await context.newPage();
+
+    // Initialize cursor
+    cursor = new PageCursor();
+    await cursor.attach(page);
   }
   return page;
 }
@@ -49,6 +55,7 @@ export async function closeBrowser(): Promise<void> {
     await browser.close();
     browser = null;
     page = null;
+    cursor = null;
   }
 }
 
@@ -57,12 +64,27 @@ export async function closeBrowser(): Promise<void> {
 export async function browserGoto(url: string): Promise<string> {
   const p = await ensureBrowser();
   await p.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+
+  // Re-attach cursor after navigation
+  if (cursor) {
+    await cursor.attach(p);
+  }
+
   return `Navigated to ${p.url()}`;
 }
 
 export async function browserClick(selector: string): Promise<string> {
   const p = await ensureBrowser();
   try {
+    const locator = p.locator(selector).first();
+    const box = await locator.boundingBox();
+    if (box && cursor) {
+      const cx = box.x + box.width / 2;
+      const cy = box.y + box.height / 2;
+      await cursor.moveTo(cx, cy);
+      await cursor.clickEffect();
+    }
+
     await p.click(selector, { timeout: 5000 });
     return `Clicked: ${selector}`;
   } catch (e) {
@@ -76,6 +98,15 @@ export async function browserType(
 ): Promise<string> {
   const p = await ensureBrowser();
   try {
+    const locator = p.locator(selector).first();
+    const box = await locator.boundingBox();
+    if (box && cursor) {
+      const cx = box.x + box.width / 2;
+      const cy = box.y + box.height / 2;
+      await cursor.moveTo(cx, cy);
+      await cursor.clickEffect();
+    }
+
     await p.fill(selector, text, { timeout: 5000 });
     return `Typed into ${selector}: "${text}"`;
   } catch (e) {
@@ -85,6 +116,9 @@ export async function browserType(
 
 export async function browserPress(key: string): Promise<string> {
   const p = await ensureBrowser();
+  if (cursor) {
+    await cursor.ensureAlive();
+  }
   await p.keyboard.press(key);
   return `Pressed key: ${key}`;
 }
@@ -94,6 +128,14 @@ export async function browserScroll(
   amount: number = 300
 ): Promise<string> {
   const p = await ensureBrowser();
+
+  if (cursor) {
+    const viewport = p.viewportSize();
+    if (viewport) {
+      await cursor.moveTo(viewport.width / 2, viewport.height / 2);
+    }
+  }
+
   const delta = direction === "down" ? amount : -amount;
   await p.mouse.wheel(0, delta);
   return `Scrolled ${direction} by ${amount}px`;
