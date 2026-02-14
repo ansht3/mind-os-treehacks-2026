@@ -2,36 +2,56 @@
 
 import asyncio
 from playwright.async_api import async_playwright
+from playwright_stealth import Stealth
 
-from actions.config import BROWSER_HEADLESS, VIEWPORT_WIDTH, VIEWPORT_HEIGHT, CURSOR_ENABLED
+from actions.config import (
+    BROWSER_HEADLESS, VIEWPORT_WIDTH, VIEWPORT_HEIGHT,
+    CURSOR_ENABLED, BROWSER_USER_DATA_DIR, TYPE_DELAY_MS,
+)
 from actions.cursor import PageCursor
 
 
 class BrowserController:
-    """Controls a Chromium browser via Playwright."""
+    """Controls a real Chrome browser via Playwright."""
 
     def __init__(self, on_cursor_move=None):
         self._playwright = None
         self._browser = None
+        self._context = None
         self._page = None
         self._on_cursor_move = on_cursor_move
         self._cursor: PageCursor | None = None
 
     async def launch(self):
-        """Launch Chromium browser."""
+        """Launch real Chrome with persistent profile + stealth.
+        Make sure Chrome is fully closed (Cmd+Q) before running."""
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(
+
+        self._context = await self._playwright.chromium.launch_persistent_context(
+            user_data_dir=BROWSER_USER_DATA_DIR,
             headless=BROWSER_HEADLESS,
+            channel="chrome",
+            viewport={"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT},
+            no_viewport=False,
             args=[
                 f"--window-size={VIEWPORT_WIDTH},{VIEWPORT_HEIGHT}",
                 "--no-sandbox",
+                "--disable-blink-features=AutomationControlled",
             ],
+            ignore_default_args=["--enable-automation"],
         )
-        context = await self._browser.new_context(
-            viewport={"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT},
-            no_viewport=False,
+        self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
+
+        # Apply stealth patches
+        stealth = Stealth(
+            navigator_platform_override="MacIntel",
+            navigator_user_agent_override=(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/144.0.0.0 Safari/537.36"
+            ),
         )
-        self._page = await context.new_page()
+        await stealth.apply_stealth_async(self._page)
 
         if CURSOR_ENABLED:
             self._cursor = PageCursor(on_position_change=self._on_cursor_move)
@@ -95,7 +115,7 @@ class BrowserController:
                 if (seen.has(key)) return;
 
                 const text = getText(el);
-                const isInput = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
+                const isInput = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.getAttribute('contenteditable') === 'true' || el.getAttribute('contenteditable') === 'plaintext-only' || el.getAttribute('role') === 'combobox' || el.getAttribute('role') === 'searchbox';
                 if (!text && !isInput) return;
 
                 seen.add(key);
@@ -130,16 +150,26 @@ class BrowserController:
                 '[role="searchbox"]',
                 '[onclick]',
                 '[tabindex]:not([tabindex="-1"])',
+                '[contenteditable="true"]',
+                '[contenteditable="plaintext-only"]',
                 'summary',
                 'label[for]',
             ].join(', ');
             document.querySelectorAll(standardSelectors).forEach(addElement);
 
+            // Also find inputs/textareas inside shadow-like wrappers (e.g. Google search)
+            document.querySelectorAll('[role="combobox"], [role="search"], [aria-label*="earch"]').forEach(el => {
+                // Try the element itself
+                addElement(el);
+                // Try children — Google nests textarea inside a div
+                el.querySelectorAll('input, textarea, [contenteditable]').forEach(addElement);
+            });
+
             const allVisible = document.querySelectorAll('div, span, li, img, svg, p, h1, h2, h3, td, th');
             for (const el of allVisible) {
                 if (id >= 60) break;
                 const style = window.getComputedStyle(el);
-                if (style.cursor === 'pointer') {
+                if (style.cursor === 'pointer' || style.cursor === 'text') {
                     addElement(el);
                 }
             }
@@ -178,13 +208,68 @@ class BrowserController:
             await self._cursor._inject_cursor()
             await self._cursor._center()
 
+    async def focus_and_type(self, text: str):
+        """Find the first visible input/textarea on the page, click it, type, and press Enter.
+        If no input found, types into whatever is currently focused."""
+        pos = await self._page.evaluate("""() => {
+            const selectors = 'input[type="text"], input[type="search"], input[type="url"], input[type="email"], input:not([type]), textarea, [contenteditable="true"], [contenteditable="plaintext-only"], [role="combobox"], [role="searchbox"]';
+            for (const el of document.querySelectorAll(selectors)) {
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden') continue;
+                if (rect.width < 10 || rect.height < 10) continue;
+                if (rect.top < 0 || rect.top > window.innerHeight) continue;
+                return {x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2)};
+            }
+            // Fallback: check if something is already focused and typeable
+            const active = document.activeElement;
+            if (active && active !== document.body) {
+                const rect = active.getBoundingClientRect();
+                if (rect.width > 5 && rect.height > 5) {
+                    return {x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), already_focused: true};
+                }
+            }
+            return null;
+        }""")
+        if pos:
+            await self.click_coords(pos["x"], pos["y"])
+        if text:
+            await self.page_type(text)
+            await self.keyboard_press("Enter")
+        return pos is not None
+
+    async def is_focused_typeable(self) -> bool:
+        """Check if the currently focused element is a text input or editable field."""
+        return await self._page.evaluate("""() => {
+            const el = document.activeElement;
+            if (!el || el === document.body) return false;
+            const tag = el.tagName;
+            if (tag === 'TEXTAREA') return true;
+            if (tag === 'INPUT') {
+                const t = (el.type || '').toLowerCase();
+                return ['text','search','url','email','password','tel','number',''].includes(t);
+            }
+            if (el.getAttribute('contenteditable') === 'true' || el.getAttribute('contenteditable') === 'plaintext-only') return true;
+            const role = el.getAttribute('role');
+            if (role === 'combobox' || role === 'searchbox' || role === 'textbox') return true;
+            return false;
+        }""")
+
+    async def keyboard_press(self, key: str):
+        """Press a key (internal helper)."""
+        await self._page.keyboard.press(key)
+
     async def type_text(self, selector: str, text: str):
         """Type text into an input element."""
-        await self._page.type(selector, text)
+        await self._page.type(selector, text, delay=TYPE_DELAY_MS)
 
     async def page_type(self, text: str):
-        """Type text into whatever element is currently focused."""
-        await self._page.keyboard.type(text)
+        """Type text into whatever element is currently focused (clears field first).
+        Types character-by-character with a human-like delay for smooth animation."""
+        # Select all existing text and replace it
+        modifier = "Meta" if "darwin" in __import__("sys").platform else "Control"
+        await self._page.keyboard.press(f"{modifier}+a")
+        await self._page.keyboard.type(text, delay=TYPE_DELAY_MS)
 
     async def press_key(self, key: str):
         """Press a keyboard key (e.g. 'Enter', 'Tab')."""
@@ -215,9 +300,9 @@ class BrowserController:
 
     async def close(self):
         """Close the browser."""
-        if self._browser:
-            await self._browser.close()
-            self._browser = None
+        if self._context:
+            await self._context.close()
+            self._context = None
             self._page = None
         if self._playwright:
             await self._playwright.stop()
