@@ -10,9 +10,70 @@ from actions.config import (
 )
 from actions.cursor import PageCursor
 
+# Extra JS injected before every page to mask Chromium automation signals
+_STEALTH_INIT_SCRIPT = """
+// Mask webdriver flag
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+
+// Fake chrome runtime (missing in headless / automation Chromium)
+if (!window.chrome) {
+    window.chrome = { runtime: {}, loadTimes: function(){}, csi: function(){} };
+}
+
+// Fake plugins (Chromium automation has empty plugin list)
+Object.defineProperty(navigator, 'plugins', {
+    get: () => {
+        const plugins = [
+            {name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format'},
+            {name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: ''},
+            {name: 'Native Client', filename: 'internal-nacl-plugin', description: ''},
+        ];
+        plugins.item = i => plugins[i] || null;
+        plugins.namedItem = n => plugins.find(p => p.name === n) || null;
+        plugins.refresh = () => {};
+        return plugins;
+    }
+});
+
+// Fake languages
+Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+
+// Hide automation-related properties from window
+delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+
+// Permissions API — make "notifications" look like a real browser (default "prompt")
+const origQuery = window.Permissions?.prototype?.query;
+if (origQuery) {
+    window.Permissions.prototype.query = function(params) {
+        if (params?.name === 'notifications') {
+            return Promise.resolve({state: Notification.permission});
+        }
+        return origQuery.call(this, params);
+    };
+}
+
+// WebGL vendor/renderer — hide SwiftShader which is a dead giveaway
+const getParameterOrig = WebGLRenderingContext.prototype.getParameter;
+WebGLRenderingContext.prototype.getParameter = function(param) {
+    if (param === 37445) return 'Google Inc. (Apple)';           // UNMASKED_VENDOR_WEBGL
+    if (param === 37446) return 'ANGLE (Apple, ANGLE Metal Renderer: Apple M1, Unspecified Version)'; // UNMASKED_RENDERER_WEBGL
+    return getParameterOrig.call(this, param);
+};
+const getParameterOrig2 = WebGL2RenderingContext?.prototype?.getParameter;
+if (getParameterOrig2) {
+    WebGL2RenderingContext.prototype.getParameter = function(param) {
+        if (param === 37445) return 'Google Inc. (Apple)';
+        if (param === 37446) return 'ANGLE (Apple, ANGLE Metal Renderer: Apple M1, Unspecified Version)';
+        return getParameterOrig2.call(this, param);
+    };
+}
+"""
+
 
 class BrowserController:
-    """Controls a real Chrome browser via Playwright."""
+    """Controls a Chromium browser via Playwright with stealth patches."""
 
     def __init__(self, on_cursor_move=None):
         self._playwright = None
@@ -23,32 +84,42 @@ class BrowserController:
         self._cursor: PageCursor | None = None
 
     async def launch(self):
-        """Launch real Chrome with persistent profile + stealth.
-        Make sure Chrome is fully closed (Cmd+Q) before running."""
+        """Launch Chromium with stealth patches to avoid bot detection."""
         self._playwright = await async_playwright().start()
 
         self._context = await self._playwright.chromium.launch_persistent_context(
             user_data_dir=BROWSER_USER_DATA_DIR,
             headless=BROWSER_HEADLESS,
-            channel="chrome",
             viewport={"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT},
             no_viewport=False,
+            locale="en-US",
+            timezone_id="America/Los_Angeles",
             args=[
                 f"--window-size={VIEWPORT_WIDTH},{VIEWPORT_HEIGHT}",
                 "--no-sandbox",
                 "--disable-blink-features=AutomationControlled",
+                "--disable-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+                "--disable-infobars",
             ],
-            ignore_default_args=["--enable-automation"],
+            ignore_default_args=[
+                "--enable-automation",
+                "--enable-blink-features=IdleDetection",
+            ],
         )
+
+        # Inject stealth script before any page JS runs (applies to all navigations)
+        await self._context.add_init_script(_STEALTH_INIT_SCRIPT)
+
         self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
 
-        # Apply stealth patches
+        # Also apply playwright_stealth for extra coverage
         stealth = Stealth(
             navigator_platform_override="MacIntel",
             navigator_user_agent_override=(
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/144.0.0.0 Safari/537.36"
+                "Chrome/133.0.0.0 Safari/537.36"
             ),
         )
         await stealth.apply_stealth_async(self._page)
