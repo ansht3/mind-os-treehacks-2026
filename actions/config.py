@@ -17,10 +17,16 @@ NUM_SUGGESTIONS: int = 12
 VIEWPORT_WIDTH: int = 1280
 VIEWPORT_HEIGHT: int = 800
 
+# Persistent browser profile — avoids CAPTCHAs and keeps login sessions
+BROWSER_USER_DATA_DIR: str = str(_project_root / ".browser_profile")
+
 # Animated cursor
 CURSOR_ENABLED: bool = True
 CURSOR_MOVE_DURATION_MS: int = 400
 CURSOR_CLICK_DELAY_MS: int = 200
+
+# Typing animation — delay in ms between each keystroke
+TYPE_DELAY_MS: int = 45
 
 # Autonomous agent
 MAX_AGENT_STEPS: int = 50

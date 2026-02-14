@@ -28,5 +28,8 @@ models/*.joblib
 .DS_Store
 Thumbs.db
 
+# Browser profile (persistent Chromium data)
+.browser_profile/
+
 # Misc
 *.log
