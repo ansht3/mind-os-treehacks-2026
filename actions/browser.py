@@ -151,9 +151,9 @@ class BrowserController:
         await self._page.mouse.click(x, y)
 
     async def scroll(self, direction: str):
-        """Scroll the page up or down."""
-        delta = -300 if direction == "up" else 300
-        await self._page.evaluate(f"window.scrollBy(0, {delta})")
+        """Scroll the page up or down with smooth animation."""
+        delta = -800 if direction == "up" else 800
+        await self._page.evaluate(f"window.scrollBy({{top: {delta}, behavior: 'smooth'}})")
 
     async def goto(self, url: str):
         """Navigate to a URL."""
