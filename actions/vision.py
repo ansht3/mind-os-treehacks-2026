@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from openai import AsyncOpenAI
 
-from actions.config import OPENAI_API_KEY, OPENAI_MODEL, NUM_SUGGESTIONS, VIEWPORT_WIDTH, VIEWPORT_HEIGHT
+from actions.config import OPENAI_API_KEY, OPENAI_MODEL, NUM_SUGGESTIONS
 
 
 @dataclass
@@ -21,37 +21,54 @@ class Suggestion:
 
 
 SYSTEM_PROMPT = f"""\
-You are a browser automation assistant. The user will send you a screenshot of a web page and the current URL.
+You are a browser automation assistant. You receive a screenshot, the current URL, and a list of interactive elements detected on the page (with their IDs, text, and positions).
 
-Analyze the page and return exactly {NUM_SUGGESTIONS} suggested next actions the user might want to take.
+Return exactly {NUM_SUGGESTIONS} suggested next actions as a JSON array (no markdown, no code fences).
 
-Return ONLY a JSON array (no markdown, no code fences) where each element has:
+Each element has:
 - "id": integer 0-{NUM_SUGGESTIONS - 1}
 - "label": short human-readable label (max 60 chars)
 - "action_type": one of "click", "scroll", "type", "navigate", "press_key"
-- "action_detail": object with keys depending on action_type:
-  - click: ALWAYS use pixel coordinates {{"x": pixel_x, "y": pixel_y}} based on where the element appears in the screenshot. The screenshot is {VIEWPORT_WIDTH}x{VIEWPORT_HEIGHT} pixels.
+- "action_detail": object depending on action_type:
+  - click: {{"element_id": N}} — the ID from the interactive elements list
   - scroll: {{"direction": "up" or "down"}}
-  - type: {{"x": pixel_x, "y": pixel_y, "text": "text to type"}} — coordinates of the input field to click first, then text to type
+  - type: {{"element_id": N, "text": "text to type"}} — click the element then type
   - navigate: {{"url": "full URL"}}
   - press_key: {{"key": "Enter" or other key name}}
 - "description": brief explanation of what this action does
 
-IMPORTANT: For click and type actions, ALWAYS use pixel coordinates (x, y) estimated from the screenshot. Do NOT use CSS selectors.
-Prioritize the most useful and common actions first. Include a mix of action types when appropriate."""
+IMPORTANT:
+- For click and type actions, use "element_id" referencing an element from the provided list.
+- Prioritize the most useful/common actions first.
+- Always include at least one scroll option.
+- If an element has an href, you may use "navigate" with that URL instead of clicking."""
 
 
 class PageAnalyzer:
-    """Sends screenshots to OpenAI Vision API and parses suggested actions."""
+    """Sends screenshots + element list to OpenAI Vision API."""
 
     def __init__(self, api_key: str = OPENAI_API_KEY):
         self._client = AsyncOpenAI(api_key=api_key)
 
     async def analyze(
-        self, screenshot_bytes: bytes, current_url: str
+        self,
+        screenshot_bytes: bytes,
+        current_url: str,
+        elements: list[dict],
     ) -> list[Suggestion]:
-        """Analyze a screenshot and return a list of suggested actions."""
+        """Analyze a screenshot + element list and return suggested actions."""
         b64_image = base64.b64encode(screenshot_bytes).decode("utf-8")
+
+        # Build a compact element list string
+        el_lines = []
+        for el in elements:
+            line = f"[{el['id']}] <{el['tag']}> \"{el['text']}\""
+            if el.get("href"):
+                line += f" href={el['href']}"
+            if el.get("type"):
+                line += f" type={el['type']}"
+            el_lines.append(line)
+        elements_text = "\n".join(el_lines) if el_lines else "(no interactive elements found)"
 
         response = await self._client.chat.completions.create(
             model=OPENAI_MODEL,
@@ -62,13 +79,13 @@ class PageAnalyzer:
                     "content": [
                         {
                             "type": "text",
-                            "text": f"Current URL: {current_url}\n\nHere is a screenshot of the page. Suggest {NUM_SUGGESTIONS} actions.",
+                            "text": f"Current URL: {current_url}\n\nInteractive elements on page:\n{elements_text}\n\nSuggest {NUM_SUGGESTIONS} actions.",
                         },
                         {
                             "type": "image_url",
                             "image_url": {
                                 "url": f"data:image/png;base64,{b64_image}",
-                                "detail": "high",
+                                "detail": "low",
                             },
                         },
                     ],
@@ -78,7 +95,6 @@ class PageAnalyzer:
         )
 
         raw = response.choices[0].message.content.strip()
-        # Strip markdown code fences if present
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1]
             raw = raw.rsplit("```", 1)[0]

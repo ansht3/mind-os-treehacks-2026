@@ -1,6 +1,7 @@
 """Main action engine that wires browser, vision, and overlay together."""
 
 import asyncio
+import struct
 
 from actions.browser import BrowserController
 from actions.vision import PageAnalyzer, Suggestion
@@ -16,6 +17,7 @@ class ActionEngine:
         self.analyzer = PageAnalyzer(api_key=OPENAI_API_KEY)
         self.overlay = Overlay()
         self._suggestions: list[Suggestion] = []
+        self._elements: list[dict] = []  # interactive elements from DOM
         self._selected: int = 0
         self._running: bool = False
 
@@ -28,15 +30,20 @@ class ActionEngine:
     async def run_cycle(self) -> list[Suggestion]:
         """Run one screenshot -> analyze -> display cycle. Returns suggestions."""
         print("\n  Analyzing page...", flush=True)
+
         screenshot = await self.browser.screenshot()
-        # Log screenshot size for debugging coordinate issues
-        import struct
         if screenshot[:8] == b'\x89PNG\r\n\x1a\n':
             w = struct.unpack('>I', screenshot[16:20])[0]
             h = struct.unpack('>I', screenshot[20:24])[0]
-            print(f"  Screenshot: {w}x{h}px ({len(screenshot)} bytes)", flush=True)
+            print(f"  Screenshot: {w}x{h}px", flush=True)
+
         current_url = await self.browser.get_url()
-        self._suggestions = await self.analyzer.analyze(screenshot, current_url)
+        self._elements = await self.browser.get_interactive_elements()
+        print(f"  Found {len(self._elements)} interactive elements", flush=True)
+
+        self._suggestions = await self.analyzer.analyze(
+            screenshot, current_url, self._elements
+        )
         self._selected = 0
         self.overlay.show(self._suggestions, self._selected)
         return self._suggestions
@@ -64,6 +71,13 @@ class ActionEngine:
         suggestion = self._suggestions[self._selected]
         await self.execute(suggestion)
 
+    def _find_element(self, element_id: int) -> dict | None:
+        """Look up an interactive element by its ID."""
+        for el in self._elements:
+            if el["id"] == element_id:
+                return el
+        return None
+
     async def execute(self, suggestion: Suggestion):
         """Dispatch a suggestion to the browser."""
         detail = suggestion.action_detail
@@ -71,27 +85,32 @@ class ActionEngine:
         print(f"  Detail: {detail}", flush=True)
         try:
             if suggestion.action_type == "click":
-                if "x" in detail and "y" in detail:
-                    print(f"  Clicking at ({detail['x']}, {detail['y']})", flush=True)
-                    await self.browser.click_coords(int(detail["x"]), int(detail["y"]))
-                elif "selector" in detail:
-                    await self.browser.click(detail["selector"])
-            elif suggestion.action_type == "type":
-                if "x" in detail and "y" in detail:
-                    print(f"  Clicking input at ({detail['x']}, {detail['y']})", flush=True)
-                    await self.browser.click_coords(int(detail["x"]), int(detail["y"]))
-                    await asyncio.sleep(0.3)
-                if "selector" in detail:
-                    await self.browser.type_text(detail["selector"], detail["text"])
+                el = self._find_element(detail.get("element_id", -1))
+                if el:
+                    print(f"  Clicking element [{el['id']}] \"{el['text']}\" at ({el['cx']},{el['cy']})", flush=True)
+                    await self.browser.click_coords(el["cx"], el["cy"])
                 else:
-                    await self.browser.page_type(detail["text"])
+                    print("  Element not found!", flush=True)
+
+            elif suggestion.action_type == "type":
+                el = self._find_element(detail.get("element_id", -1))
+                if el:
+                    print(f"  Clicking input [{el['id']}] at ({el['cx']},{el['cy']})", flush=True)
+                    await self.browser.click_coords(el["cx"], el["cy"])
+                    await asyncio.sleep(0.3)
+                await self.browser.page_type(detail.get("text", ""))
+
             elif suggestion.action_type == "navigate":
-                print(f"  Navigating to: {detail['url']}", flush=True)
-                await self.browser.goto(detail["url"])
+                url = detail.get("url", "")
+                print(f"  Navigating to: {url}", flush=True)
+                await self.browser.goto(url)
+
             elif suggestion.action_type == "scroll":
                 await self.browser.scroll(detail.get("direction", "down"))
+
             elif suggestion.action_type == "press_key":
                 await self.browser.press_key(detail["key"])
+
             print("  Done!", flush=True)
         except Exception as e:
             print(f"\n  Action failed: {e}", flush=True)

@@ -11,7 +11,7 @@ load_dotenv(_project_root / "silentpilot" / ".env")
 load_dotenv(_project_root / ".env")
 
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL: str = "gpt-4o"
+OPENAI_MODEL: str = "gpt-4o-mini"
 BROWSER_HEADLESS: bool = False
 NUM_SUGGESTIONS: int = 10
 VIEWPORT_WIDTH: int = 1280
