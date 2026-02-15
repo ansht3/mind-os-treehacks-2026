@@ -73,6 +73,9 @@ class AutonomousAgent:
             print(f"       Action: {action.action_type} — {action.description}", flush=True)
             await self._execute(action)
 
+            # Restore cursor after action (navigation may have wiped it)
+            await self.browser.ensure_cursor()
+
             # Brief pause for page to update
             await asyncio.sleep(1)
 

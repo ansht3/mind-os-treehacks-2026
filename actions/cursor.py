@@ -81,6 +81,49 @@ _RIPPLE_TPL = """() => {{
 }}"""
 
 
+def _build_persistence_js(svg_arrow, cursor_css):
+    """Build JS that installs a MutationObserver to auto-re-inject the cursor."""
+    return """() => {
+    if (window.__sp_cursor_observer) return;
+    const SVG = '""" + svg_arrow + """';
+    const CSS = `""" + cursor_css.replace('`', '\\`') + """`;
+    function ensureCursor() {
+        if (document.getElementById('__sp_cursor')) return;
+        if (!document.getElementById('__sp_cursor_style')) {
+            const s = document.createElement('style');
+            s.id = '__sp_cursor_style';
+            s.textContent = CSS;
+            (document.head || document.documentElement).appendChild(s);
+        }
+        const d = document.createElement('div');
+        d.id = '__sp_cursor';
+        d.innerHTML = SVG;
+        if (window.__sp_cursor_x !== undefined) {
+            d.style.left = window.__sp_cursor_x + 'px';
+            d.style.top = window.__sp_cursor_y + 'px';
+        }
+        document.documentElement.appendChild(d);
+        if (!document.getElementById('__sp_ripple')) {
+            const r = document.createElement('div');
+            r.id = '__sp_ripple';
+            document.documentElement.appendChild(r);
+        }
+    }
+    window.__sp_cursor_observer = new MutationObserver(ensureCursor);
+    window.__sp_cursor_observer.observe(document.documentElement, {childList: true, subtree: true});
+    ensureCursor();
+}"""
+
+
+PERSIST_JS = _build_persistence_js(_SVG_ARROW, _CURSOR_CSS)
+
+# JS to update the stored position (so observer re-injects at the right spot)
+_STORE_POS_TPL = """() => {{
+    window.__sp_cursor_x = {x};
+    window.__sp_cursor_y = {y};
+}}"""
+
+
 class PageCursor:
     """Injects and controls a smooth animated cursor on a browser page."""
 
@@ -94,12 +137,27 @@ class PageCursor:
         """Attach cursor to a page and place at viewport center."""
         self._page = page
         await self._inject_cursor()
+        await self._install_persistence()
         await self._center()
 
     async def _inject_cursor(self):
         """Inject cursor element into the current page."""
         try:
             await self._page.evaluate(INJECT_JS)
+        except Exception:
+            pass
+
+    async def _install_persistence(self):
+        """Install MutationObserver that auto-re-injects cursor if removed."""
+        try:
+            await self._page.evaluate(PERSIST_JS)
+        except Exception:
+            pass
+
+    async def _store_position(self):
+        """Store current position in window globals so observer can restore it."""
+        try:
+            await self._page.evaluate(_STORE_POS_TPL.format(x=self._x, y=self._y))
         except Exception:
             pass
 
@@ -120,7 +178,7 @@ class PageCursor:
             pass
 
     async def ensure_alive(self):
-        """Re-inject cursor if it was removed (e.g. by dynamic page updates)."""
+        """Re-inject cursor and persistence observer if removed (e.g. after navigation)."""
         try:
             exists = await self._page.evaluate(
                 "() => !!document.getElementById('__sp_cursor')"
@@ -132,8 +190,12 @@ class PageCursor:
                     const c = document.getElementById('__sp_cursor');
                     if (c) {{ c.style.left = '{self._x}px'; c.style.top = '{self._y}px'; }}
                 }}""")
+            # Always reinstall persistence (navigation wipes JS state)
+            await self._install_persistence()
+            await self._store_position()
         except Exception:
             await self._inject_cursor()
+            await self._install_persistence()
 
     async def move_to(self, x, y, duration_ms=None):
         """Smoothly animate cursor to (x, y) using rAF in the browser."""
@@ -156,6 +218,7 @@ class PageCursor:
         await asyncio.sleep(duration_ms / 1000 + 0.05)
         self._x = x
         self._y = y
+        await self._store_position()
         if self._on_position_change:
             self._on_position_change(x, y, "move")
 

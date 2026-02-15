@@ -158,6 +158,9 @@ class BrowserController:
             await self._cursor.move_to(x, y)
             await self._cursor.click_effect()
         await self._page.mouse.click(x, y)
+        # Click may trigger navigation — wait briefly then restore cursor
+        await asyncio.sleep(0.5)
+        await self.ensure_cursor()
 
     async def scroll(self, direction: str):
         """Scroll the page up or down with smooth animation."""
@@ -176,6 +179,7 @@ class BrowserController:
         await asyncio.sleep(0.5)
         if self._cursor:
             await self._cursor._inject_cursor()
+            await self._cursor._install_persistence()
             await self._cursor._center()
 
     async def type_text(self, selector: str, text: str):
@@ -189,14 +193,22 @@ class BrowserController:
     async def press_key(self, key: str):
         """Press a keyboard key (e.g. 'Enter', 'Tab')."""
         await self._page.keyboard.press(key)
+        # Enter/submit can trigger navigation — restore cursor
+        if key in ("Enter", "Return"):
+            await asyncio.sleep(0.5)
+            await self.ensure_cursor()
 
     async def go_back(self):
         """Go back in browser history."""
         await self._page.go_back(wait_until="domcontentloaded", timeout=8000)
+        await asyncio.sleep(0.3)
+        await self.ensure_cursor()
 
     async def go_forward(self):
         """Go forward in browser history."""
         await self._page.go_forward(wait_until="domcontentloaded", timeout=8000)
+        await asyncio.sleep(0.3)
+        await self.ensure_cursor()
 
     async def get_url(self) -> str:
         """Get the current page URL."""
