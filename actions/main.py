@@ -39,7 +39,7 @@ async def run_gui_loop(url: str, command_queue: queue.Queue, overlay):
     """Main loop: EMG thought-class buttons + free entry. No DOM action suggestions."""
     from actions.engine import ActionEngine
     from actions.word_finder import find_words_for_sequence
-    from actions.word_disambiguate import pick_best_word
+    from actions.word_disambiguate import pick_best_word, suggest_noun_or_use_dict
 
     if not OPENAI_API_KEY:
         print("ERROR: OPENAI_API_KEY not set. Check silentpilot/.env", flush=True)
@@ -85,35 +85,53 @@ async def run_gui_loop(url: str, command_queue: queue.Queue, overlay):
                     overlay.set_status(False)
                     overlay.update_agent_status("Looking up…")
 
-                    candidates = find_words_for_sequence(emg_sequence)
+                    page_context = ""
+                    try:
+                        page_context = f"Title: {await engine.browser.get_page_title()}\nText: {(await engine.browser.get_page_text())[:1200]}"
+                    except Exception:
+                        pass
+                    prev_words = _get_previously_added_words()
 
-                    if not candidates:
-                        overlay.show_word_confirmation("(no matches)", False)
-                        overlay.update_agent_status("No matches")
-                        word_candidates = []
-                        emg_sequence = []
-                        overlay.update_sequence([])
+                    # Ask OpenAI: is this a noun? Noun → Yes/No only. Not noun → dictionary + Yes/No/Retry
+                    noun_word, is_noun = await suggest_noun_or_use_dict(
+                        emg_sequence, page_context, prev_words
+                    )
+
+                    if is_noun and noun_word:
+                        # Proper noun — Yes/No only, no Retry
+                        word_candidates = [noun_word]
+                        word_candidate_index = 0
+                        overlay.show_word_confirmation(noun_word, False)
                         overlay.set_status(True)
+                        overlay.update_agent_status("Yes / No")
                     else:
-                        page_context = ""
-                        try:
-                            page_title = await engine.browser.get_page_title()
-                            page_text = await engine.browser.get_page_text()
-                            page_context = f"Title: {page_title}\nText: {page_text[:1200]}"
-                        except Exception:
-                            pass
-
-                        prev_words = _get_previously_added_words()
-                        if len(candidates) == 1:
-                            suggested = candidates[0]
+                        # Fall back to dictionary search
+                        candidates = find_words_for_sequence(emg_sequence)
+                        if not candidates:
+                            overlay.show_word_confirmation("(no matches)", False)
+                            overlay.update_agent_status("No matches")
+                            word_candidates = []
+                            emg_sequence = []
+                            overlay.update_sequence([])
+                            overlay.set_status(True)
                         else:
-                            suggested = await pick_best_word(candidates, page_context, prev_words)
-
-                        word_candidates = candidates
-                        word_candidate_index = candidates.index(suggested) if suggested in candidates else 0
-                        overlay.show_word_confirmation(suggested, len(candidates) > 1)
-                        overlay.set_status(True)
-                        overlay.update_agent_status("Yes / No / Retry")
+                            if len(candidates) == 1:
+                                suggested = candidates[0]
+                            else:
+                                suggested = await pick_best_word(
+                                    candidates, page_context, prev_words
+                                )
+                            word_candidates = candidates
+                            word_candidate_index = (
+                                candidates.index(suggested)
+                                if suggested in candidates
+                                else 0
+                            )
+                            overlay.show_word_confirmation(
+                                suggested, len(candidates) > 1
+                            )
+                            overlay.set_status(True)
+                            overlay.update_agent_status("Yes / No / Retry")
                 else:
                     emg_sequence.append(cls)
                     overlay.update_sequence(emg_sequence)
@@ -146,6 +164,8 @@ async def run_gui_loop(url: str, command_queue: queue.Queue, overlay):
                 goal = " ".join(accumulated_prompt)
                 if goal:
                     await _run_agent_in_gui(engine, planner, overlay, goal, command_queue)
+                accumulated_prompt.clear()
+                overlay.update_prompt_display([])
                 overlay.set_status(True)
                 overlay.update_agent_status("Ready")
 
