@@ -1,7 +1,5 @@
 # MindOS — TreeHacks 2026
 
-## We were selected as part of TreeHacks 2026, one of the world’s largest student hackathons, where 1,000 hackers were chosen from 15,000+ applicants to build ambitious technology projects.
-
 ### Our Idea
 
 MindOS is a silent speech interface that turns micro muscle signals (EMG) from the jaw and throat into real computer actions.
