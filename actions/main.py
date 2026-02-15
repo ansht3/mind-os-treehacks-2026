@@ -50,8 +50,21 @@ async def run_gui_loop(url: str, command_queue: queue.Queue, overlay):
     loop = asyncio.get_event_loop()
     try:
         print("  Launching browser...", flush=True)
-        await engine.start(url)
-        print("  Browser ready!", flush=True)
+        try:
+            await engine.start(url)
+            print("  Browser ready!", flush=True)
+        except Exception as e:
+            print(f"  Browser launch failed: {e}", flush=True)
+            print("  GUI running without browser. Enter a goal or quit.", flush=True)
+            overlay.update_agent_status("No browser — enter a goal below")
+            # Wait for user commands even without browser
+            while True:
+                cmd = await loop.run_in_executor(None, command_queue.get)
+                if cmd == "quit":
+                    return
+                if cmd.startswith("goal:"):
+                    overlay.update_agent_status(f"Browser not available")
+                continue
         while True:
             try:
                 await engine.run_cycle()
@@ -122,108 +135,133 @@ async def _run_agent_in_gui(engine, planner, overlay, goal, command_queue):
     """Run the autonomous agent using the existing engine's browser, with GUI updates."""
     from actions.vision import Suggestion
 
+    def _check_stop() -> bool:
+        """Drain the queue and return True if user wants to stop."""
+        while True:
+            try:
+                cmd = command_queue.get_nowait()
+                if cmd in ("quit", "stop_agent"):
+                    return True
+            except Exception:
+                return False
+
     planner.reset()
     overlay.set_status(False)
     overlay.update_agent_status(f"Agent: {goal}")
+    overlay.show_stop_button()
     browser = engine.browser
     max_steps = MAX_AGENT_STEPS
 
-    for step in range(1, max_steps + 1):
-        await browser.ensure_cursor()
+    try:
+        for step in range(1, max_steps + 1):
+            if _check_stop():
+                overlay.update_agent_status("Agent stopped by user")
+                return
 
-        current_url = await browser.get_url()
-        page_title = await browser.get_page_title()
+            await browser.ensure_cursor()
 
-        try:
-            elements = await browser.get_interactive_elements()
-        except Exception:
-            await asyncio.sleep(0.5)
+            current_url = await browser.get_url()
+            page_title = await browser.get_page_title()
+
             try:
                 elements = await browser.get_interactive_elements()
             except Exception:
-                elements = []
+                await asyncio.sleep(0.5)
+                try:
+                    elements = await browser.get_interactive_elements()
+                except Exception:
+                    elements = []
 
-        overlay.update_agent_status(f"Agent step {step}: {page_title[:40]}")
-
-        action = await planner.decide_next_action(
-            goal=goal,
-            current_url=current_url,
-            page_title=page_title,
-            elements=elements,
-            step_number=step,
-        )
-
-        if action is None:
-            overlay.update_agent_status(f"Agent step {step}: retrying...")
-            await asyncio.sleep(1)
-            continue
-
-        if action.action_type == "done":
-            summary = action.action_detail.get("summary", "Done")
-            overlay.update_agent_status(f"Agent done: {summary}")
-            await asyncio.sleep(1)
-            return
-
-        if action.action_type == "confirm":
-            # Ask the user — pause and wait for their response
-            question = action.action_detail.get("question", "Should I proceed?")
-            overlay.update_agent_status(f"Agent asks: {question}")
-            overlay.show_agent_question(question)
-            # Wait for user answer from the GUI
-            loop = asyncio.get_event_loop()
-            while True:
-                cmd = await loop.run_in_executor(None, command_queue.get)
-                if cmd == "quit":
-                    return
-                if cmd.startswith("answer:"):
-                    answer = cmd[7:]
-                    # Feed the answer back to the planner as a user message
-                    planner._messages.append({"role": "user", "content": f"User response: {answer}"})
-                    overlay.update_agent_status(f"Agent: continuing...")
-                    break
-            continue
-
-        overlay.update_agent_status(f"Agent: {action.description[:50]}")
-
-        # Execute action with cursor animation
-        detail = action.action_detail
-        try:
-            if action.action_type == "click":
-                el = _find_el(elements, detail.get("element_id", -1))
-                if el:
-                    await browser.click_coords(el["cx"], el["cy"])
-            elif action.action_type == "type":
-                el = _find_el(elements, detail.get("element_id", -1))
-                if el:
-                    await browser.click_coords(el["cx"], el["cy"])
-                text = detail.get("text", "")
-                if text:
-                    await browser.page_type(text)
-            elif action.action_type == "navigate":
-                await browser.goto(detail.get("url", ""))
-            elif action.action_type == "scroll":
-                await browser.scroll(detail.get("direction", "down"))
-            elif action.action_type == "press_key":
-                await browser.press_key(detail.get("key", "Enter"))
-            elif action.action_type == "history":
-                if detail.get("direction") == "back":
-                    await browser.go_back()
-                else:
-                    await browser.go_forward()
-        except Exception as e:
-            print(f"  Agent action failed: {e}", flush=True)
-
-        # Check if user wants to interrupt (non-blocking)
-        try:
-            cmd = command_queue.get_nowait()
-            if cmd == "quit":
+            if _check_stop():
+                overlay.update_agent_status("Agent stopped by user")
                 return
-        except Exception:
-            pass
 
-        await asyncio.sleep(1)
+            overlay.update_agent_status(f"Agent step {step}: {page_title[:40]}")
 
-    overlay.update_agent_status(f"Agent: max steps reached")
+            page_text = await browser.get_page_text()
+
+            action = await planner.decide_next_action(
+                goal=goal,
+                current_url=current_url,
+                page_title=page_title,
+                elements=elements,
+                page_text=page_text,
+                step_number=step,
+            )
+
+            if _check_stop():
+                overlay.update_agent_status("Agent stopped by user")
+                return
+
+            if action is None:
+                overlay.update_agent_status(f"Agent step {step}: retrying...")
+                await asyncio.sleep(1)
+                continue
+
+            if action.action_type == "done":
+                summary = action.action_detail.get("summary", "Done")
+                overlay.update_agent_status(f"Agent done: {summary}")
+                await asyncio.sleep(1)
+                return
+
+            if action.action_type == "confirm":
+                question = action.action_detail.get("question", "Should I proceed?")
+                overlay.update_agent_status(f"Agent asks: {question}")
+                overlay.show_agent_question(question)
+                loop = asyncio.get_event_loop()
+                while True:
+                    cmd = await loop.run_in_executor(None, command_queue.get)
+                    if cmd in ("quit", "stop_agent"):
+                        overlay.update_agent_status("Agent stopped by user")
+                        return
+                    if cmd.startswith("answer:"):
+                        answer = cmd[7:]
+                        planner._messages.append({"role": "user", "content": f"User response: {answer}"})
+                        overlay.update_agent_status(f"Agent: continuing...")
+                        break
+                continue
+
+            overlay.update_agent_status(f"Agent: {action.description[:50]}")
+
+            if _check_stop():
+                overlay.update_agent_status("Agent stopped by user")
+                return
+
+            # Execute action
+            detail = action.action_detail
+            try:
+                if action.action_type == "click":
+                    el = _find_el(elements, detail.get("element_id", -1))
+                    if el:
+                        await browser.click_coords(el["cx"], el["cy"])
+                elif action.action_type == "type":
+                    el = _find_el(elements, detail.get("element_id", -1))
+                    if el:
+                        await browser.click_coords(el["cx"], el["cy"])
+                    text = detail.get("text", "")
+                    if text:
+                        await browser.page_type(text)
+                elif action.action_type == "navigate":
+                    await browser.goto(detail.get("url", ""))
+                elif action.action_type == "scroll":
+                    await browser.scroll(detail.get("direction", "down"))
+                elif action.action_type == "press_key":
+                    await browser.press_key(detail.get("key", "Enter"))
+                elif action.action_type == "find_text":
+                    await browser.find_text(detail.get("text", ""))
+                elif action.action_type == "history":
+                    if detail.get("direction") == "back":
+                        await browser.go_back()
+                    else:
+                        await browser.go_forward()
+            except Exception as e:
+                print(f"  Agent action failed: {e}", flush=True)
+
+            await asyncio.sleep(1)
+
+        overlay.update_agent_status("Agent: max steps reached")
+    finally:
+        overlay.hide_stop_button()
 
 
 def _find_el(elements, element_id):

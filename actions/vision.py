@@ -28,7 +28,7 @@ Given:
 - History of actions you've already taken
 
 Decide the SINGLE next action. Return ONLY a JSON object (no markdown, no extra text):
-{"action_type": "click|type|scroll|navigate|press_key|confirm|done", "action_detail": {}, "reasoning": "brief explanation"}
+{"action_type": "click|type|scroll|navigate|press_key|find_text|confirm|done", "action_detail": {}, "reasoning": "brief explanation"}
 
 action_detail formats:
 - click: {"element_id": N}
@@ -36,21 +36,28 @@ action_detail formats:
 - scroll: {"direction": "up|down"}
 - navigate: {"url": "https://..."}
 - press_key: {"key": "Enter|Tab|Escape|..."}
+- find_text: {"text": "search term"}  — opens browser Find (Cmd+F) and searches for text on the current page. Use this to locate specific info on long pages (e.g. Wikipedia).
 - confirm: {"question": "Should I do X?"}  — ASK the user before proceeding
 - done: {"summary": "what was accomplished"}
 
 CRITICAL RULES:
 1. ONLY take actions that directly accomplish the user's stated goal. Do NOT interact with popups, banners, language selectors, cookie prompts, sign-in prompts, or anything unrelated to the goal — just ignore them.
-2. If you are unsure whether an action is what the user wants, use "confirm" to ask them first. Examples: choosing between products, selecting options the user didn't specify, clicking something that might change account settings.
-3. NEVER change settings (language, location, preferences, account details) unless the user explicitly asked.
-4. Take the shortest path to the goal. Skip unnecessary steps.
-5. Use element_id from the provided element list — pick the best match.
-6. For search: type into the search box, then press_key Enter in the next step. The field will be cleared automatically before typing — do NOT click or clear it yourself.
-7. Return "done" when the goal is accomplished or truly cannot be completed.
-8. NEVER repeat an action you already took. Review your action history carefully. If you already typed and searched, do NOT type and search again. If a search was submitted, look at the results on the current page.
-9. NEVER go back to re-do something you already did. Move forward.
-10. If you get stuck on the same page, try scrolling or a different approach — do NOT click random UI elements.
-11. NEVER use "history" (back/forward) more than once in a row. If going back didn't help, try navigating directly to a URL instead."""
+2. ALWAYS use "confirm" before clicking a link that navigates to a new page (e.g. a search result, a product link, an article). The user must approve which result to visit. Example: {"action_type": "confirm", "action_detail": {"question": "Click on 'Shawn Shen - LinkedIn'?"}}
+3. If you are unsure whether an action is what the user wants, use "confirm" to ask them first. Examples: choosing between products, selecting options the user didn't specify, clicking something that might change account settings.
+4. NEVER change settings (language, location, preferences, account details) unless the user explicitly asked.
+5. Take the shortest path to the goal. Skip unnecessary steps.
+6. Use element_id from the provided element list — pick the best match.
+7. For search: type into the search box, then press_key Enter in the next step. The field will be cleared automatically before typing — do NOT click or clear it yourself.
+8. Return "done" when the goal is accomplished or truly cannot be completed.
+9. PAY CLOSE ATTENTION TO USER RESPONSES. When the user says "no" to a confirm and provides extra info (e.g. "no, he's from Georgia Tech"), incorporate that info into your next action. If the current search results don't match, REFINE your search query with the new details (e.g. search "Shawn Shen Georgia Tech" instead of "Shawn Shen" again). Never ignore hints the user gives you.
+10. NEVER repeat the same search query. If you already searched for something, DO NOT type it again. Look at the results already on the page. If you need different results, use a DIFFERENT, more specific query.
+11. READ THE PAGE before acting. If search results are visible, examine them — do not re-search. If none match the goal, scroll down to see more results OR refine your search with additional keywords.
+12. NEVER go back to re-do something you already did. Move forward.
+13. If you get stuck on the same page, try scrolling or a different approach — do NOT click random UI elements.
+14. NEVER use "history" (back/forward) more than once in a row. If going back didn't help, try navigating directly to a URL instead.
+15. after every one click should be another question to user. user needs to accept before making another action.
+16. IMPORTANT — FINDING INFO ON A PAGE: When you are on a content-heavy page (Wikipedia, articles, docs) and need to find specific info (a date, a name, a fact), you MUST use "find_text" IMMEDIATELY — do NOT scroll. For example, to find Ronaldo's birthday on Wikipedia, use {"action_type": "find_text", "action_detail": {"text": "Born"}}. NEVER scroll more than twice on the same page looking for information — use find_text instead.
+17. If you have already scrolled twice on the same page without finding what you need, your next action MUST be find_text."""
 
 
 class AgentPlanner:
@@ -71,6 +78,7 @@ class AgentPlanner:
         page_title: str,
         elements: list[dict],
         step_number: int,
+        page_text: str = "",
     ) -> Suggestion | None:
         """Decide the next action based on current page state.
 
@@ -88,16 +96,21 @@ class AgentPlanner:
             el_parts.append(p)
         el_text = "\n".join(el_parts) if el_parts else "(no interactive elements found)"
 
+        # Include truncated page text so the agent can read the page
+        page_snippet = ""
+        if page_text:
+            page_snippet = f"\nVisible page text (truncated):\n{page_text[:2000]}\n"
+
         user_content = f"""Goal: {goal}
 
 Step: {step_number}
 URL: {current_url}
 Page Title: {page_title}
-
+{page_snippet}
 Interactive elements:
 {el_text}
 
-What is the single next action?"""
+What is the single next action? Remember: if you need to find specific info on this page, use find_text instead of scrolling."""
 
         # Build messages — system + conversation history + current state
         if not self._messages:

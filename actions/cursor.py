@@ -8,23 +8,24 @@ import asyncio
 
 from actions.config import CURSOR_MOVE_DURATION_MS, CURSOR_CLICK_DELAY_MS
 
-# Inline SVG arrow — red with white outline, classic pointer shape
+# Inline SVG arrow — bright neon-blue with white outline, large pointer
 _SVG_ARROW = (
-    '<svg xmlns="http://www.w3.org/2000/svg" width="38" height="38" viewBox="0 0 24 24">'
+    '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">'
     '<path d="M2 2 L2 20 L7.5 14.5 L12 22 L15 20.5 L10.5 13 L18 13 Z" '
-    'fill="#dc2626" stroke="white" stroke-width="1.5" stroke-linejoin="round"/>'
+    'fill="#00bbff" stroke="white" stroke-width="2" stroke-linejoin="round"/>'
     '</svg>'
 ).replace('"', '\\"')
 
-# CSS for cursor — includes subtle blink (gentle opacity pulse)
+# CSS for cursor — bright glow + gentle pulse
 _CURSOR_CSS = (
     "#__sp_cursor { position:fixed; z-index:2147483647; pointer-events:none;"
-    " width:38px; height:38px; filter:drop-shadow(1px 2px 4px rgba(0,0,0,0.45));"
+    " width:48px; height:48px;"
+    " filter:drop-shadow(0 0 8px rgba(0,187,255,0.9)) drop-shadow(0 2px 6px rgba(0,0,0,0.5));"
     " left:50vw; top:50vh; animation: __sp_blink 1.8s ease-in-out infinite; }"
-    " @keyframes __sp_blink { 0%,100%{opacity:1;} 50%{opacity:0.55;} }"
+    " @keyframes __sp_blink { 0%,100%{opacity:1;} 50%{opacity:0.7;} }"
     " #__sp_ripple { position:fixed; z-index:2147483646; pointer-events:none;"
-    " width:40px; height:40px; border-radius:50%;"
-    " border:2.5px solid rgba(220,38,38,0.85);"
+    " width:50px; height:50px; border-radius:50%;"
+    " border:3px solid rgba(0,187,255,0.9);"
     " transform:translate(-50%,-50%) scale(0); opacity:0; }"
 )
 

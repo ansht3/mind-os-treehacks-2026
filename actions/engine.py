@@ -177,6 +177,9 @@ class ActionEngine:
             elif suggestion.action_type == "press_key":
                 await self.browser.press_key(detail.get("key", "Enter"))
 
+            elif suggestion.action_type == "find_text":
+                await self.browser.find_text(detail.get("text", ""))
+
             elif suggestion.action_type == "history":
                 if detail.get("direction") == "back":
                     await self.browser.go_back()
@@ -234,6 +237,8 @@ class AutonomousAgent:
             # Display top 10 available actions for visibility
             self._print_suggestions(self._elements[:10])
 
+            page_text = await self.browser.get_page_text()
+
             # Ask LLM for next action
             action = await self.planner.decide_next_action(
                 goal=goal,
@@ -241,6 +246,7 @@ class AutonomousAgent:
                 page_title=page_title,
                 elements=self._elements,
                 step_number=step,
+                page_text=page_text,
             )
 
             if action is None:
@@ -253,6 +259,17 @@ class AutonomousAgent:
                 summary = action.action_detail.get("summary", "Goal completed")
                 print(f"       DONE: {summary}\n", flush=True)
                 return
+
+            # Handle confirmation requests
+            if action.action_type == "confirm":
+                question = action.action_detail.get("question", "Should I proceed?")
+                print(f"       ? {question}", flush=True)
+                answer = input("       > ").strip()
+                if answer.lower() in ("q", "quit", "exit"):
+                    print("       Stopped by user.\n", flush=True)
+                    return
+                self.planner._messages.append({"role": "user", "content": f"User response: {answer}"})
+                continue
 
             # Log and execute
             print(f"       Action: {action.action_type} — {action.description}", flush=True)
@@ -310,6 +327,9 @@ class AutonomousAgent:
 
             elif action.action_type == "press_key":
                 await self.browser.press_key(detail.get("key", "Enter"))
+
+            elif action.action_type == "find_text":
+                await self.browser.find_text(detail.get("text", ""))
 
             elif action.action_type == "history":
                 if detail.get("direction") == "back":

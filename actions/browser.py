@@ -2,11 +2,10 @@
 
 import asyncio
 from playwright.async_api import async_playwright
-from playwright_stealth import Stealth
 
 from actions.config import (
     BROWSER_HEADLESS, VIEWPORT_WIDTH, VIEWPORT_HEIGHT,
-    CURSOR_ENABLED, BROWSER_USER_DATA_DIR, TYPE_DELAY_MS,
+    CURSOR_ENABLED, TYPE_DELAY_MS,
 )
 from actions.cursor import PageCursor
 
@@ -84,16 +83,11 @@ class BrowserController:
         self._cursor: PageCursor | None = None
 
     async def launch(self):
-        """Launch Chromium with stealth patches to avoid bot detection."""
+        """Launch Playwright's bundled Chromium (no Chrome, no persistent profile)."""
         self._playwright = await async_playwright().start()
 
-        self._context = await self._playwright.chromium.launch_persistent_context(
-            user_data_dir=BROWSER_USER_DATA_DIR,
+        self._browser = await self._playwright.chromium.launch(
             headless=BROWSER_HEADLESS,
-            viewport={"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT},
-            no_viewport=False,
-            locale="en-US",
-            timezone_id="America/Los_Angeles",
             args=[
                 f"--window-size={VIEWPORT_WIDTH},{VIEWPORT_HEIGHT}",
                 "--no-sandbox",
@@ -108,21 +102,16 @@ class BrowserController:
             ],
         )
 
+        self._context = await self._browser.new_context(
+            viewport={"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT},
+            locale="en-US",
+            timezone_id="America/Los_Angeles",
+        )
+
         # Inject stealth script before any page JS runs (applies to all navigations)
         await self._context.add_init_script(_STEALTH_INIT_SCRIPT)
 
-        self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
-
-        # Also apply playwright_stealth for extra coverage
-        stealth = Stealth(
-            navigator_platform_override="MacIntel",
-            navigator_user_agent_override=(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/133.0.0.0 Safari/537.36"
-            ),
-        )
-        await stealth.apply_stealth_async(self._page)
+        self._page = await self._context.new_page()
 
         if CURSOR_ENABLED:
             self._cursor = PageCursor(on_position_change=self._on_cursor_move)
@@ -346,6 +335,15 @@ class BrowserController:
         """Press a keyboard key (e.g. 'Enter', 'Tab')."""
         await self._page.keyboard.press(key)
 
+    async def find_text(self, text: str):
+        """Open browser Find bar (Cmd/Ctrl+F) and search for text on page."""
+        import sys
+        modifier = "Meta" if "darwin" in sys.platform else "Control"
+        await self._page.keyboard.press(f"{modifier}+f")
+        await asyncio.sleep(0.3)
+        await self._page.keyboard.type(text, delay=30)
+        await asyncio.sleep(0.5)
+
     async def go_back(self):
         """Go back in browser history."""
         await self._page.go_back(wait_until="domcontentloaded", timeout=8000)
@@ -375,6 +373,9 @@ class BrowserController:
             await self._context.close()
             self._context = None
             self._page = None
+        if self._browser:
+            await self._browser.close()
+            self._browser = None
         if self._playwright:
             await self._playwright.stop()
             self._playwright = None
