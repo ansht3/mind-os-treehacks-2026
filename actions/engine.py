@@ -214,24 +214,27 @@ class AutonomousAgent:
         self.planner.reset()
         print(f"\n  Goal: {goal}\n", flush=True)
 
+        action_result = ""  # Feedback from previous action to send to LLM
+        consecutive_failures = 0
+
         for step in range(1, self.max_steps + 1):
             # Ensure cursor is alive after page updates
             await self.browser.ensure_cursor()
 
             # Get current page context
-            current_url = await self.browser.get_url()
+            url_before = await self.browser.get_url()
             page_title = await self.browser.get_page_title()
 
             try:
                 self._elements = await self.browser.get_interactive_elements()
             except Exception:
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(1)
                 try:
                     self._elements = await self.browser.get_interactive_elements()
                 except Exception:
                     self._elements = []
 
-            print(f"  [{step}] {page_title} — {current_url}", flush=True)
+            print(f"  [{step}] {page_title} — {url_before}", flush=True)
             print(f"       {len(self._elements)} elements found", flush=True)
 
             # Display top 10 available actions for visibility
@@ -242,17 +245,24 @@ class AutonomousAgent:
             # Ask LLM for next action
             action = await self.planner.decide_next_action(
                 goal=goal,
-                current_url=current_url,
+                current_url=url_before,
                 page_title=page_title,
                 elements=self._elements,
                 step_number=step,
                 page_text=page_text,
+                action_result=action_result,
             )
+            action_result = ""  # Reset for this step
 
             if action is None:
-                print(f"       LLM failed to respond, retrying...", flush=True)
+                consecutive_failures += 1
+                print(f"       LLM failed to respond ({consecutive_failures}/3)", flush=True)
+                if consecutive_failures >= 3:
+                    print("       Too many LLM failures, stopping.\n", flush=True)
+                    return
                 await asyncio.sleep(1)
                 continue
+            consecutive_failures = 0
 
             # Check if done
             if action.action_type == "done":
@@ -273,10 +283,18 @@ class AutonomousAgent:
 
             # Log and execute
             print(f"       Action: {action.action_type} — {action.description}", flush=True)
-            await self._execute(action)
+            action_result = await self._execute(action)
+            print(f"       Result: {action_result}", flush=True)
 
-            # Brief pause for page to update
-            await asyncio.sleep(1)
+            # Wait for page to update — longer for navigation actions
+            if action.action_type in ("type", "navigate", "click"):
+                await asyncio.sleep(2)
+                # Extra wait if URL changed (page navigation)
+                url_after = await self.browser.get_url()
+                if url_after != url_before:
+                    await asyncio.sleep(1)
+            else:
+                await asyncio.sleep(1)
 
         print(f"\n  Reached max steps ({self.max_steps}). Stopping.\n", flush=True)
 
@@ -300,45 +318,87 @@ class AutonomousAgent:
                 return el
         return None
 
-    async def _execute(self, action: Suggestion):
-        """Execute a single action on the browser."""
+    def _find_element_by_text(self, text_hint: str) -> dict | None:
+        """Fuzzy fallback: find an element whose text contains the hint."""
+        if not text_hint:
+            return None
+        hint_lower = text_hint.lower()
+        for el in self._elements:
+            if hint_lower in el.get("text", "").lower():
+                return el
+        return None
+
+    async def _execute(self, action: Suggestion) -> str:
+        """Execute a single action on the browser. Returns a result string for the LLM."""
         detail = action.action_detail
         try:
             if action.action_type == "click":
                 el = self._find_element(detail.get("element_id", -1))
+                if not el:
+                    # Fallback: try to find by reasoning text
+                    el = self._find_element_by_text(action.description)
                 if el:
                     await self.browser.click_coords(el["cx"], el["cy"])
+                    return f"Clicked \"{el['text'][:50]}\""
+                else:
+                    return f"ERROR: element_id {detail.get('element_id')} not found in current elements"
 
             elif action.action_type == "type":
                 el = self._find_element(detail.get("element_id", -1))
+                if not el:
+                    # Fallback: find first input element
+                    for e in self._elements:
+                        if e["tag"] in ("input", "textarea") or e.get("type") in ("text", "search"):
+                            el = e
+                            break
                 if el:
                     await self.browser.click_coords(el["cx"], el["cy"])
-                text = detail.get("text", "")
-                if text:
-                    await self.browser.page_type(text)
+                    text = detail.get("text", "")
+                    if text:
+                        await self.browser.page_type(text)
+                        # Auto-press Enter after typing (search submission)
+                        await self.browser.press_key("Enter")
+                        return f"Typed \"{text}\" and pressed Enter"
+                    return f"Clicked input \"{el['text'][:30]}\""
+                else:
+                    return "ERROR: no input element found on page"
 
             elif action.action_type == "navigate":
                 url = detail.get("url", "")
                 if url:
                     await self.browser.goto(url)
+                    return f"Navigated to {url[:60]}"
+                return "ERROR: no URL provided"
 
             elif action.action_type == "scroll":
-                await self.browser.scroll(detail.get("direction", "down"))
+                direction = detail.get("direction", "down")
+                await self.browser.scroll(direction)
+                return f"Scrolled {direction}"
 
             elif action.action_type == "press_key":
-                await self.browser.press_key(detail.get("key", "Enter"))
+                key = detail.get("key", "Enter")
+                await self.browser.press_key(key)
+                return f"Pressed {key}"
 
             elif action.action_type == "find_text":
-                await self.browser.find_text(detail.get("text", ""))
+                # find_text opens Cmd+F which breaks the browser state.
+                # Instead, just scroll down — the LLM will see updated page text.
+                await self.browser.scroll("down")
+                return "Scrolled down to find content (find_text converted to scroll)"
 
             elif action.action_type == "history":
                 if detail.get("direction") == "back":
                     await self.browser.go_back()
+                    return "Went back"
                 else:
                     await self.browser.go_forward()
+                    return "Went forward"
+
+            else:
+                return f"Unknown action type: {action.action_type}"
 
         except Exception as e:
-            print(f"       Action failed: {e}", flush=True)
+            return f"ERROR: {e}"
 
     async def stop(self):
         """Close the browser."""

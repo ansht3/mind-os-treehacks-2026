@@ -1,3 +1,6 @@
+# Browser profile
+.browser_profile/
+
 # Python
 __pycache__/
 *.py[cod]

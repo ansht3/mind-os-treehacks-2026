@@ -190,12 +190,29 @@ async def _run_agent_in_gui(engine, planner, overlay, goal, command_queue):
             except Exception:
                 return False
 
+    def _find_el(elements, element_id):
+        for el in elements:
+            if el["id"] == element_id:
+                return el
+        return None
+
+    def _find_el_by_text(elements, text_hint):
+        if not text_hint:
+            return None
+        hint_lower = text_hint.lower()
+        for el in elements:
+            if hint_lower in el.get("text", "").lower():
+                return el
+        return None
+
     planner.reset()
     overlay.set_status(False)
     overlay.update_agent_status(f"Agent: {goal}")
     overlay.show_stop_button()
     browser = engine.browser
     max_steps = MAX_AGENT_STEPS
+    action_result = ""
+    consecutive_failures = 0
 
     try:
         for step in range(1, max_steps + 1):
@@ -205,13 +222,13 @@ async def _run_agent_in_gui(engine, planner, overlay, goal, command_queue):
 
             await browser.ensure_cursor()
 
-            current_url = await browser.get_url()
+            url_before = await browser.get_url()
             page_title = await browser.get_page_title()
 
             try:
                 elements = await browser.get_interactive_elements()
             except Exception:
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(1)
                 try:
                     elements = await browser.get_interactive_elements()
                 except Exception:
@@ -227,21 +244,28 @@ async def _run_agent_in_gui(engine, planner, overlay, goal, command_queue):
 
             action = await planner.decide_next_action(
                 goal=goal,
-                current_url=current_url,
+                current_url=url_before,
                 page_title=page_title,
                 elements=elements,
                 page_text=page_text,
                 step_number=step,
+                action_result=action_result,
             )
+            action_result = ""
 
             if _check_stop():
                 overlay.update_agent_status("Agent stopped by user")
                 return
 
             if action is None:
-                overlay.update_agent_status(f"Agent step {step}: retrying...")
+                consecutive_failures += 1
+                overlay.update_agent_status(f"Agent step {step}: retrying ({consecutive_failures}/3)...")
+                if consecutive_failures >= 3:
+                    overlay.update_agent_status("Agent: too many failures, stopped")
+                    return
                 await asyncio.sleep(1)
                 continue
+            consecutive_failures = 0
 
             if action.action_type == "done":
                 summary = action.action_detail.get("summary", "Done")
@@ -250,11 +274,7 @@ async def _run_agent_in_gui(engine, planner, overlay, goal, command_queue):
                 return
 
             if action.action_type == "confirm":
-                # Auto-proceed: no confirmation, take the action
                 planner._messages.append({"role": "user", "content": "Yes, go ahead."})
-                # Fall through to execute the implied action - but confirm has no direct execution.
-                # The planner returned "confirm" instead of the actual action. We need to ask again
-                # for the real action. Simplest: treat confirm as "proceed" - re-prompt for next.
                 continue
 
             overlay.update_agent_status(f"Agent: {action.description[:50]}")
@@ -263,48 +283,84 @@ async def _run_agent_in_gui(engine, planner, overlay, goal, command_queue):
                 overlay.update_agent_status("Agent stopped by user")
                 return
 
-            # Execute action
+            # Execute action with result feedback
             detail = action.action_detail
             try:
                 if action.action_type == "click":
                     el = _find_el(elements, detail.get("element_id", -1))
+                    if not el:
+                        el = _find_el_by_text(elements, action.description)
                     if el:
                         await browser.click_coords(el["cx"], el["cy"])
+                        action_result = f"Clicked \"{el['text'][:50]}\""
+                    else:
+                        action_result = f"ERROR: element_id {detail.get('element_id')} not found"
+
                 elif action.action_type == "type":
                     el = _find_el(elements, detail.get("element_id", -1))
+                    if not el:
+                        for e in elements:
+                            if e["tag"] in ("input", "textarea") or e.get("type") in ("text", "search"):
+                                el = e
+                                break
                     if el:
                         await browser.click_coords(el["cx"], el["cy"])
-                    text = detail.get("text", "")
-                    if text:
-                        await browser.page_type(text)
+                        text = detail.get("text", "")
+                        if text:
+                            await browser.page_type(text)
+                            await browser.press_key("Enter")
+                            action_result = f"Typed \"{text}\" and pressed Enter"
+                        else:
+                            action_result = f"Clicked input \"{el['text'][:30]}\""
+                    else:
+                        action_result = "ERROR: no input element found"
+
                 elif action.action_type == "navigate":
-                    await browser.goto(detail.get("url", ""))
+                    url = detail.get("url", "")
+                    if url:
+                        await browser.goto(url)
+                        action_result = f"Navigated to {url[:60]}"
+                    else:
+                        action_result = "ERROR: no URL provided"
+
                 elif action.action_type == "scroll":
-                    await browser.scroll(detail.get("direction", "down"))
+                    direction = detail.get("direction", "down")
+                    await browser.scroll(direction)
+                    action_result = f"Scrolled {direction}"
+
                 elif action.action_type == "press_key":
-                    await browser.press_key(detail.get("key", "Enter"))
+                    key = detail.get("key", "Enter")
+                    await browser.press_key(key)
+                    action_result = f"Pressed {key}"
+
                 elif action.action_type == "find_text":
-                    await browser.find_text(detail.get("text", ""))
+                    await browser.scroll("down")
+                    action_result = "Scrolled down to find content"
+
                 elif action.action_type == "history":
                     if detail.get("direction") == "back":
                         await browser.go_back()
+                        action_result = "Went back"
                     else:
                         await browser.go_forward()
+                        action_result = "Went forward"
+
             except Exception as e:
+                action_result = f"ERROR: {e}"
                 print(f"  Agent action failed: {e}", flush=True)
 
-            await asyncio.sleep(1)
+            # Wait for page to update
+            if action.action_type in ("type", "navigate", "click"):
+                await asyncio.sleep(2)
+                url_after = await browser.get_url()
+                if url_after != url_before:
+                    await asyncio.sleep(1)
+            else:
+                await asyncio.sleep(1)
 
         overlay.update_agent_status("Agent: max steps reached")
     finally:
         overlay.hide_stop_button()
-
-
-def _find_el(elements, element_id):
-    for el in elements:
-        if el["id"] == element_id:
-            return el
-    return None
 
 
 def run_gui(url: str):

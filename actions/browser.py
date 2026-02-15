@@ -1,11 +1,12 @@
 """Playwright browser controller for automation and actions."""
 
 import asyncio
+import os
 from playwright.async_api import async_playwright
 
 from actions.config import (
     BROWSER_HEADLESS, VIEWPORT_WIDTH, VIEWPORT_HEIGHT,
-    CURSOR_ENABLED, TYPE_DELAY_MS,
+    CURSOR_ENABLED, TYPE_DELAY_MS, BROWSER_USER_DATA_DIR,
 )
 from actions.cursor import PageCursor
 
@@ -83,11 +84,28 @@ class BrowserController:
         self._cursor: PageCursor | None = None
 
     async def launch(self):
-        """Launch Playwright's bundled Chromium (no Chrome, no persistent profile)."""
+        """Launch Chromium with a persistent profile to retain cookies/sessions."""
         self._playwright = await async_playwright().start()
 
-        self._browser = await self._playwright.chromium.launch(
+        # Ensure the profile directory exists
+        os.makedirs(BROWSER_USER_DATA_DIR, exist_ok=True)
+
+        # Remove stale Chromium lock files left behind by crashed sessions
+        for lock_name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+            lock_path = os.path.join(BROWSER_USER_DATA_DIR, lock_name)
+            try:
+                os.remove(lock_path)
+            except FileNotFoundError:
+                pass
+
+        # Use launch_persistent_context so cookies, logins, and sessions survive
+        # across runs.  This also avoids fresh-fingerprint bot detection.
+        self._context = await self._playwright.chromium.launch_persistent_context(
+            user_data_dir=BROWSER_USER_DATA_DIR,
             headless=BROWSER_HEADLESS,
+            viewport={"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT},
+            locale="en-US",
+            timezone_id="America/Los_Angeles",
             args=[
                 f"--window-size={VIEWPORT_WIDTH},{VIEWPORT_HEIGHT}",
                 "--no-sandbox",
@@ -102,16 +120,14 @@ class BrowserController:
             ],
         )
 
-        self._context = await self._browser.new_context(
-            viewport={"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT},
-            locale="en-US",
-            timezone_id="America/Los_Angeles",
-        )
+        # With persistent context, browser handle is the context itself
+        self._browser = None
 
         # Inject stealth script before any page JS runs (applies to all navigations)
         await self._context.add_init_script(_STEALTH_INIT_SCRIPT)
 
-        self._page = await self._context.new_page()
+        # Reuse existing page if one was opened, otherwise create one
+        self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
 
         if CURSOR_ENABLED:
             self._cursor = PageCursor(on_position_change=self._on_cursor_move)
@@ -165,7 +181,7 @@ class BrowserController:
             }
 
             function addElement(el) {
-                if (id >= 60) return;
+                if (id >= 80) return;
                 if (!isVisible(el)) return;
                 const rect = el.getBoundingClientRect();
                 const cx = Math.round(rect.left + rect.width / 2);
@@ -260,7 +276,7 @@ class BrowserController:
     async def goto(self, url: str):
         """Navigate to a URL and wait for page to be interactive."""
         try:
-            await self._page.goto(url, wait_until="networkidle", timeout=12000)
+            await self._page.goto(url, wait_until="domcontentloaded", timeout=15000)
         except Exception:
             pass
         await asyncio.sleep(0.5)
@@ -373,8 +389,6 @@ class BrowserController:
             await self._context.close()
             self._context = None
             self._page = None
-        if self._browser:
-            await self._browser.close()
             self._browser = None
         if self._playwright:
             await self._playwright.stop()
